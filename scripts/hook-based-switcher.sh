@@ -18,6 +18,7 @@ status_icon() {
         working) printf '\033[1;33m⣾\033[0m' ;;
         done) printf '\033[1;32m✓\033[0m' ;;
         ask) printf '\033[1;31m?\033[0m' ;;
+        stale) printf '\033[2;32m✓\033[0m' ;;
         wait) printf '\033[1;36m⏸\033[0m' ;;
         parked) printf '\033[1;35mP\033[0m' ;;
         *) printf '\033[90m·\033[0m' ;;
@@ -96,16 +97,20 @@ toggle_mode() {
     fi
 }
 
-# Display priority for agents mode (ask first, then done, then working,
-# then wait, then parked). Distinct from status_priority used elsewhere
-# for "best status" rollups.
+# Display priority for agents mode: whatever most needs a human goes first.
+# Blocked agents, then finished ones waiting to be collected, then finished
+# ones that have been waiting a long while, then everything still busy or
+# deliberately set aside. Distinct from status_priority used elsewhere for
+# "best status" rollups.
 agents_mode_priority() {
     case "$1" in
-        ask)     echo 5 ;;
-        done)    echo 4 ;;
-        working) echo 3 ;;
-        wait)    echo 2 ;;
-        parked)  echo 1 ;;
+        ask)     echo 7 ;;
+        done)    echo 6 ;;
+        stale)   echo 5 ;;
+        working) echo 4 ;;
+        wait)    echo 3 ;;
+        parked)  echo 2 ;;
+        idle)    echo 1 ;;
         *)       echo 0 ;;
     esac
 }
@@ -298,26 +303,33 @@ get_agents_rows() {
     local tab=$'\t'
 
     {
-    local session pane_id win_idx win_name cmd pane_title
+    local session pane_id win_idx win_name cmd pane_title pane_pid
     local order=0
 
-    while IFS=$'\t' read -r session pane_id win_idx win_name cmd pane_title; do
+    while IFS=$'\t' read -r session pane_id win_idx win_name cmd pane_title pane_pid; do
         [ -z "$session" ] && continue
         [ "$pane_title" = "agent-sidebar" ] && continue
 
+        # Agents mode lists agents, not panes. Without this gate every plain
+        # shell on the server showed up, wearing whatever status its session
+        # happened to be reporting.
+        local agent=""
+        agent=$(pane_agent_name "$session" "$pane_id" "$pane_pid") || continue
+
+        # An agent that predates the hooks has no status file of its own.
+        # It is still a real agent and belongs on the dashboard — as unknown,
+        # not as a copy of whatever a sibling pane is doing.
         local status
-        status=$(get_pane_status "$session" "$pane_id")
+        status=$(get_pane_status "$session" "$pane_id") || status="idle"
         case "$status" in
-            working|done|ask|wait|parked) ;;
+            working|done|ask|stale|wait|parked|idle) ;;
+            '') status="idle" ;;
             *) continue ;;
         esac
 
-        local pri icon agent badge=""
+        local pri icon badge=""
         pri=$(agents_mode_priority "$status")
         icon=$(status_icon "$status")
-
-        agent=""
-        [ -f "$PANE_DIR/${session}_${pane_id}.agent" ] && agent=$(<"$PANE_DIR/${session}_${pane_id}.agent")
         [ -n "$agent" ] && badge=" [$agent]"
 
         # SORTKEY \t row …  SORTKEY = pri (desc) + order (asc)
@@ -328,7 +340,7 @@ get_agents_rows() {
 
         order=$((order + 1))
     done < <(tmux list-panes -a -F \
-        "#{session_name}${tab}#{pane_id}${tab}#{window_index}${tab}#{window_name}${tab}#{pane_current_command}${tab}#{pane_title}" 2>/dev/null)
+        "#{session_name}${tab}#{pane_id}${tab}#{window_index}${tab}#{window_name}${tab}#{pane_current_command}${tab}#{pane_title}${tab}#{pane_pid}" 2>/dev/null)
     } | sort -k1,1nr -k2,2n | cut -f3-
 }
 

@@ -97,13 +97,54 @@ normalize_local_wait_status() {
 
 status_priority() {
     case "$1" in
-        working) echo 5 ;;
-        wait) echo 4 ;;
-        ask) echo 3 ;;
-        done) echo 2 ;;
+        working) echo 6 ;;
+        wait) echo 5 ;;
+        ask) echo 4 ;;
+        done) echo 3 ;;
+        stale) echo 2 ;;
         parked) echo 1 ;;
         *) echo 0 ;;
     esac
+}
+
+# Seconds a finished agent sits untouched before it reads as "stale".
+# 0 disables the derivation entirely. Cached per process — this is read on
+# every pane of every refresh.
+_STALE_AFTER=""
+stale_after_seconds() {
+    if [ -z "$_STALE_AFTER" ]; then
+        _STALE_AFTER=$(tmux show-option -gqv @agent-stale-after 2>/dev/null)
+        case "$_STALE_AFTER" in
+            ''|*[!0-9]*) _STALE_AFTER=1800 ;;
+        esac
+    fi
+    printf '%s\n' "$_STALE_AFTER"
+}
+
+# "done" that nobody has collected for a while is worth distinguishing from
+# "done" that just landed. The status file's mtime is already the last
+# transition time, so this needs no extra bookkeeping.
+apply_stale() {
+    local status="$1"
+    local status_file="$2"
+
+    [ "$status" = "done" ] || { printf '%s\n' "$status"; return; }
+    [ -f "$status_file" ] || { printf '%s\n' "$status"; return; }
+
+    local threshold
+    threshold=$(stale_after_seconds)
+    [ "$threshold" -gt 0 ] 2>/dev/null || { printf '%s\n' "$status"; return; }
+
+    local mtime now
+    mtime=$(stat -c %Y "$status_file" 2>/dev/null || stat -f %m "$status_file" 2>/dev/null)
+    [ -n "$mtime" ] || { printf '%s\n' "$status"; return; }
+    printf -v now '%(%s)T' -1
+
+    if [ "$((now - mtime))" -ge "$threshold" ]; then
+        printf 'stale\n'
+    else
+        printf '%s\n' "$status"
+    fi
 }
 
 write_session_status() {
@@ -260,11 +301,25 @@ get_pane_status() {
     fi
 
     if [ -f "$pane_status" ]; then
-        cat "$pane_status" 2>/dev/null || echo ""
+        local raw
+        raw=$(cat "$pane_status" 2>/dev/null)
+        # Reaching here means there is no .parked marker, so a status file
+        # still reading "parked" is left over from an unpark that cleared the
+        # marker but not the file — the pane would show parked forever.
+        # Mirrors the existing normalisation for stranded "wait".
+        if [ "$raw" = "parked" ]; then
+            raw="done"
+            echo "done" > "$pane_status" 2>/dev/null
+        fi
+        apply_stale "$raw" "$pane_status"
         return
     fi
 
-    get_agent_status "$session"
+    # No file: this pane has never reported a status. Deliberately empty
+    # rather than falling back to the session rollup — a pane is not "working"
+    # because a sibling pane is, and a plain shell is not an agent at all.
+    # Callers decide what an unknown pane means in their context.
+    return 1
 }
 
 get_window_status() {

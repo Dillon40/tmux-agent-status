@@ -218,7 +218,7 @@ collect_status_agents() {
             astatus=$(get_pane_status "$session" "$pane_id")
             (( session_wait )) && [ "$astatus" != "parked" ] && astatus="wait"
             case "$astatus" in
-                working|wait|done|ask) ;;
+                working|wait|done|ask|stale) ;;
                 *) continue ;;
             esac
 
@@ -239,7 +239,7 @@ collect_status_agents() {
         local status
         status=$(get_agent_status "$session")
         case "$status" in
-            working|wait|done|ask) ;;
+            working|wait|done|ask|stale) ;;
             *) continue ;;
         esac
         [ -z "$detected_name" ] && detected_name=$(find_session_agent_name "$session")

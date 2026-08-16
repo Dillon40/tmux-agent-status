@@ -202,8 +202,15 @@ HOME="$TEST_HOME" \
 "$REPO_DIR/scripts/sidebar-collector.sh" --once >/dev/null
 
 assert_contains $'R:I|repo|w0|repo › main|done\trepo:w0\tP' "$CACHE_FILE" "a done window with explicit pane status should appear in the inbox"
-assert_contains $'R:I|repo|w1|repo › review-a|done\trepo:w1\tP' "$CACHE_FILE" "done sibling windows should still appear in the inbox when they inherit session status"
-assert_contains $'R:I|repo|w2|repo › review-b|done\trepo:w2\tP' "$CACHE_FILE" "multiple done sibling windows should appear in the inbox when they inherit session status"
+
+# Panes with no status file of their own must NOT borrow the session rollup.
+# Inheriting it meant one busy agent made every quiet sibling look busy, and
+# one finished agent put every silent sibling in the inbox. A pane that has
+# never reported is "idle" — unknown, not done.
+assert_not_contains $'R:I|repo|w1|repo › review-a|done\trepo:w1\tP' "$CACHE_FILE" "a pane that never reported a status must not be treated as done via the session rollup"
+assert_not_contains $'R:I|repo|w2|repo › review-b|done\trepo:w2\tP' "$CACHE_FILE" "a second unreported pane must not be treated as done via the session rollup"
+assert_matches $'^R:P\\|repo\\|%2\\|review-a\\|idle\\|[01]\trepo:w1\tP$' "$CACHE_FILE" "an agent pane with no status file should render as idle"
+assert_matches $'^R:P\\|repo\\|%3\\|review-b\\|idle\\|[01]\trepo:w2\tP$' "$CACHE_FILE" "a second agent pane with no status file should render as idle"
 
 PATH="$FAKE_BIN:$PATH" \
 HOME="$TEST_HOME" \
@@ -223,8 +230,9 @@ HOME="$TEST_HOME" \
 "$REPO_DIR/scripts/sidebar-collector.sh" --once >/dev/null
 
 assert_not_contains $'R:I|repo|w0|repo › main|done\trepo:w0\tP' "$CACHE_FILE" "parking one window should remove only that window from the inbox even with sparse pane metadata"
-assert_contains $'R:I|repo|w1|repo › review-a|done\trepo:w1\tP' "$CACHE_FILE" "parking one window should preserve sibling done windows even when they inherit session status"
-assert_contains $'R:I|repo|w2|repo › review-b|done\trepo:w2\tP' "$CACHE_FILE" "parking one window should preserve multiple sibling done windows even when they inherit session status"
-assert_contains $'R:S|repo|done||\trepo\tS' "$CACHE_FILE" "parking one window should leave the session done when only sibling done windows remain"
+assert_matches $'^R:P\\|repo\\|%2\\|review-a\\|idle\\|[01]\trepo:w1\tP$' "$CACHE_FILE" "parking one window must leave unreported siblings idle, not inherited-done"
+assert_matches $'^R:P\\|repo\\|%3\\|review-b\\|idle\\|[01]\trepo:w2\tP$' "$CACHE_FILE" "parking one window must leave every unreported sibling idle"
+assert_matches $'^R:P\\|repo\\|%1\\|main\\|parked\\|[01]\trepo:w0\tP$' "$CACHE_FILE" "parking one window should mark only that window parked"
+assert_contains $'R:S|repo|done||\trepo\tS' "$CACHE_FILE" "parking one window should not drag the session status to parked"
 
 echo "sidebar window park scope regression checks passed"

@@ -49,8 +49,9 @@ find_ancestor_pane() {
 # ─── State priority ───────────────────────────────────────────────
 _state_pri() {
     case "$1" in
-        working) echo 5 ;; wait)    echo 4 ;; ask)     echo 3 ;;
-        done)    echo 2 ;; parked)  echo 1 ;; *)       echo 0 ;;
+        working) echo 6 ;; wait)    echo 5 ;; ask)     echo 4 ;;
+        done)    echo 3 ;; stale)   echo 2 ;; parked)  echo 1 ;;
+        *)       echo 0 ;;
     esac
 }
 
@@ -248,7 +249,7 @@ collect_data() {
         local pane_status=""
         local pane_file="$pane_dir/${owner}_${pid_id}.status"
         if [ -f "$pane_file" ]; then
-            pane_status=$(<"$pane_file")
+            pane_status=$(apply_stale "$(<"$pane_file")" "$pane_file")
         fi
         # Check per-pane parked/wait overrides
         [ -f "$PARKED_DIR/${owner}_${pid_id}.parked" ] && pane_status="parked"
@@ -259,7 +260,11 @@ collect_data() {
                 pane_status="wait"
             fi
         fi
-        [ -z "$pane_status" ] && pane_status="${sess_state[$owner]:-done}"
+        # An agent pane with no status file has never reported in — typically
+        # it started before the hooks were installed. Report that honestly
+        # instead of copying the session rollup down onto it, which made one
+        # busy agent paint every quiet sibling "working".
+        [ -z "$pane_status" ] && pane_status="idle"
         sess_agents[$owner]+="${pid_id}:${agent_name}:${pane_status} "
     done
 
@@ -293,7 +298,7 @@ collect_data() {
                 ((SUMMARY_WAITING++))
                 ((SUMMARY_TOTAL++))
                 ;;
-            done|ask)
+            done|ask|stale)
                 ((SUMMARY_DONE++))
                 ((SUMMARY_TOTAL++))
                 ;;
@@ -313,7 +318,7 @@ collect_data() {
         [ -z "$sname" ] && continue
         local sstate="${sess_state[$sname]}"
         case "$sstate" in
-            working|wait|done|ask) ;;
+            working|wait|done|ask|stale) ;;
             *) continue ;;
         esac
 
@@ -335,7 +340,7 @@ collect_data() {
                 astatus="wait"
             fi
             case "$astatus" in
-                working|wait|done|ask)
+                working|wait|done|ask|stale)
                     SUMMARY_AGENTS+=("${aname}:${astatus}")
                     ;;
             esac
@@ -354,7 +359,7 @@ collect_data() {
             seen+="$pid "
             local rest="${ap#*:}"; local ps="${rest#*:}"
             case "$ps" in
-                working) ((pw++)) ;; done|ask) ((pd++)) ;; wait) ((pwt++)) ;;
+                working) ((pw++)) ;; done|ask|stale) ((pd++)) ;; wait) ((pwt++)) ;;
             esac
             ((count++))
         done
@@ -526,7 +531,7 @@ collect_data() {
                 if (( ${#arr[@]} <= 1 )); then
                     local ap="${arr[0]:-}"
                     local pst="${ap#*:}"; pst="${pst#*:}"
-                    [[ "$pst" == "done" || "$pst" == "ask" ]] && inbox+=("I|${sname}||${sname}|done")
+                    [[ "$pst" == "done" || "$pst" == "ask" || "$pst" == "stale" ]] && inbox+=("I|${sname}||${sname}|done")
                     continue
                 fi
 
@@ -561,7 +566,7 @@ collect_data() {
                         local r="${ap#*:}"
                         local aname="${r%%:*}"
                         local pst="${r#*:}"
-                        [[ "$pst" == "done" || "$pst" == "ask" ]] && inbox+=("I|${sname}|${pid}|${sname} › ${aname} #${ai}|done")
+                        [[ "$pst" == "done" || "$pst" == "ask" || "$pst" == "stale" ]] && inbox+=("I|${sname}|${pid}|${sname} › ${aname} #${ai}|done")
                     done < <(tmux list-panes -t "${sname}:${only_wi}" -F "#{pane_id}" 2>/dev/null)
                 else
                     local wi=""
@@ -574,7 +579,7 @@ collect_data() {
                         for wap in ${_ib_win[$wi]}; do
                             local ws="${wap#*:}"
                             ws="${ws#*:}"
-                            [[ "$ws" == "done" || "$ws" == "ask" ]] && any_done=1
+                            [[ "$ws" == "done" || "$ws" == "ask" || "$ws" == "stale" ]] && any_done=1
                         done
                         (( any_done )) && inbox+=("I|${sname}|w${wi}|${sname} › ${wname}|done")
                     done < <(tmux list-windows -t "$sname" -F "#{window_index}" 2>/dev/null)
@@ -585,7 +590,7 @@ collect_data() {
 
             [[ -n "${worktree_parent[$sname]:-}" ]] && continue
             local st="${eff_state[$sname]}"
-            [[ "$st" == "done" || "$st" == "ask" ]] && inbox+=("I|${sname}||${sname}|done")
+            [[ "$st" == "done" || "$st" == "ask" || "$st" == "stale" ]] && inbox+=("I|${sname}||${sname}|done")
         done
 
         if (( ${#inbox[@]} > 0 )); then
