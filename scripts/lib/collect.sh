@@ -273,6 +273,10 @@ collect_data() {
         local cur_st="${sess_state[$sname]}"
         [[ "$cur_st" == "wait" || "$cur_st" == "parked" ]] && continue
         local best_pri=-1 best_st="$cur_st"
+        # We are iterating sessions that have agent panes, so "noagent" is
+        # already wrong here — it means every agent in the session predates the
+        # hooks and has never reported. That is "idle", not "no agent".
+        [[ "$cur_st" == "noagent" ]] && best_st="idle"
         best_pri=$(_state_pri "$best_st" 2>/dev/null || echo 0)
         for ap in ${sess_agents[$sname]}; do
             local rest="${ap#*:}"; rest="${rest#*:}"
