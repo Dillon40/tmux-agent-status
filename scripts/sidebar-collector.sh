@@ -110,6 +110,6 @@ while true; do
         signal_sidebar_clients USR2 active
     fi
 
-    sleep 0.25
+    sleep 0.5
     tick=$(( (tick + 1) % 4 ))
 done

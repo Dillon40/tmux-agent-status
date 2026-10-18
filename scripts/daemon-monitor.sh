@@ -23,7 +23,7 @@ fi
 
 # Start monitoring in background
 (
-    echo $$ > "$MONITOR_PID_FILE"
+    echo $BASHPID > "$MONITOR_PID_FILE"
 
     while tmux list-sessions >/dev/null 2>&1; do
         # Check if smart-monitor is running
